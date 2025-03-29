@@ -1,83 +1,113 @@
-const express = require("express");
-const sqlite3 = require("sqlite3").verbose();
-const bodyParser = require("body-parser");
+const express = require('express');
+const { Sequelize, DataTypes } = require('sequelize');
+const path = require('path');
+const cors = require('cors');
 
 const app = express();
-const PORT = 3000;
+const port = 3000;
 
-// Middleware to parse JSON requests
-app.use(bodyParser.json());
+app.use(cors());
+app.use(express.json());
+app.use(express.static(path.join(__dirname, 'public')));
 
-// Connect to SQLite database (or create it)
-const db = new sqlite3.Database("./database.db", (err) => {
-  if (err) {
-    console.error("Error connecting to database:", err.message);
-  } else {
-    console.log("Connected to SQLite database.");
-  }
+// Connect to a SQLite database using Sequelize
+const sequelize = new Sequelize({
+    dialect: 'sqlite',
+    storage: './database.db',
+    logging: true // Print SQL commands
 });
 
-// Create users table if it doesn't exist
-db.run(`CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    email TEXT UNIQUE NOT NULL
-)`, (err) => {
-    if (err) {
-        console.error('Error creating table:', err.message);
+// Define User model
+const User = sequelize.define('User', {
+    id: {
+        type: DataTypes.INTEGER,
+        autoIncrement: true,
+        primaryKey: true
+    },
+    name: {
+        type: DataTypes.STRING,
+        allowNull: false
+    },
+    email: {
+        type: DataTypes.STRING,
+        allowNull: false,
+        unique: true
     }
+}, {
+    timestamps: false
 });
 
+// Synchronize database
+sequelize.sync()
+    .then(() => console.log("Database synchronized"))
+    .catch(err => console.error("Error synchronizing database:", err));
 
-// Route to insert a new user via HTTP POST
-app.post("/users", (req, res) => {
-  const { name, email } = req.body;
-
-  if (!name || !email) {
-    return res.status(400).json({ error: "Name and email are required" });
-  }
-
-  const sql = `INSERT INTO users (name, email) VALUES (?, ?)`;
-  db.run(sql, [name, email], function (err) {
-    if (err) {
-      return res.status(500).json({ error: err.message });
-    }
-    res.status(201).json({ message: "User added", userId: this.lastID });
-  });
-});
-
-// Route to get all users
-app.get('/users', (req, res) => {
-    db.all(`SELECT * FROM users`, [], (err, rows) => {
-        if (err) {
-            return res.status(500).json({ error: err.message });
+// Create a new user (Create)
+app.post('/users', async (req, res) => {
+    try {
+        const { name, email } = req.body;
+        if (!name || !email) {
+            return res.status(400).json({ error: 'Name and email are required' });
         }
-        res.json(rows);
-   });
-});
-// Route to update a user by ID
-app.put('/users/:id', (req, res) => {
-  const { id } = req.params;
-  const { name, email } = req.body;
-
-  if (!name || !email) {
-      return res.status(400).json({ error: 'Name and email are required' });
-  }
-
-  const sql = `UPDATE users SET name = ?, email = ? WHERE id = ?`;
-  db.run(sql, [name, email, id], function (err) {
-      if (err) {
-          return res.status(500).json({ error: err.message });
-      }
-      if (this.changes === 0) {
-          return res.status(404).json({ error: 'User not found' });
-      }
-      res.json({ message: 'User updated successfully' });
-  });
+        const user = await User.create({ name, email });
+        res.status(201).json(user);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
+// Search all users (Read)
+app.get('/users', async (req, res) => {
+    try {
+        const users = await User.findAll();
+        res.json(users);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Update user information (Update)
+app.put('/users/:id', async (req, res) => {
+    try {
+        const { name, email } = req.body;
+        const { id } = req.params;
+        if (!name || !email) {
+            return res.status(400).json({ error: 'Name and email are required' });
+        }
+        const user = await User.findByPk(id);
+        if (!user) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+        user.name = name;
+        user.email = email;
+        await user.save();
+        res.json({ message: 'User information updated', user });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Delete user (Delete)
+app.delete('/users/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const user = await User.findByPk(id);
+        if (!user) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+        await user.destroy();
+        res.json({ message: 'User deleted', id });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
 
 // Start the server
-app.listen(PORT, () => {
-  console.log(`Server running at http://localhost:${PORT}`);
+app.listen(port, () => {
+    console.log(`Server running at http://localhost:${port}`);
 });
+
+/*
+The required modules can be installed with a single command:
+npm install express sequelize sqlite3 cors
+*/
